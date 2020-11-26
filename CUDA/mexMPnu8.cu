@@ -933,7 +933,7 @@ void mexFunction(int nlhs, mxArray *plhs[],
   cudaMemset(d_stSort, 0,  maxFR * sizeof(int));
 
 
-  dim3 tpB(8, 2*nt0-1), tpF(16, Nnearest), tpS(nt0, 16), tpW(Nnearest, Nrank), tpPC(NchanU, Nrank);
+  dim3 tpF(16, Nnearest), tpS(nt0, 16), tpPC(NchanU, Nrank);
 
   // filter the data with the spatial templates
   spaceFilter<<<Nfilt, Nthreads>>>(d_Params, d_draw, d_U, d_iC, d_iW, d_data);
@@ -950,7 +950,6 @@ void mexFunction(int nlhs, mxArray *plhs[],
 #ifndef ENSURE_DETERM
   if (useStableMode) {
       // create copy of the dataraw, d_dout, d_data as doubles for arithmetic
-      // number of consecutive points to convert = Params(17) (Params(18) in matlab)         
       cudaMalloc(&d_draw64, NT*Nchan * sizeof(double));
       convToDouble<<<100,Nthreads>>>(d_Params, d_draw, d_draw64);  
   }
