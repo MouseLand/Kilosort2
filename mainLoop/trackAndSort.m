@@ -30,6 +30,8 @@ for j = 1:Nfilt
     dWU(:,:,j) = mu(j) * squeeze(W(:, j, :)) * squeeze(U(:, j, :))';
 end
 
+fprintf( 'size of dWU, matrix that holds the templates: \n');
+disp(size(dWU));
 
 ops.fig = getOr(ops, 'fig', 1); % whether to show plots every N batches
 
@@ -46,9 +48,13 @@ nBatches  = rez.temp.Nbatch;
 NT  	= ops.NT;
 
 
-% two variables for the same thing? number of nearest channels to each primary channel
-NchanNear   = min(ops.Nchan, 16);
-Nnearest    = min(ops.Nchan, 32);
+% Nnearest is the number of nearest templates to store features for
+% NchanNear is the number of nearest channels to take PC features from; this is also the size of template in channels
+NtemplateChan = getOr(ops,'NtemplateChan', 16);
+NtempFeatChan = getOr(ops,'NtempFeatChan', 32);
+Nnearest   = min(ops.Nchan, NtempFeatChan);      % param[5], Nnearest in CUDA, number of channels for which template features are stored
+NchanNear    = min(ops.Nchan, NtemplateChan);  % param[10], NchanU in CUDA, PCs are calculated on each channel in the template
+
 
 % decay of gaussian spatial mask centered on a channel
 sigmaMask  = ops.sigmaMask;
@@ -83,7 +89,7 @@ Params     = double([NT Nfilt ops.Th(1) nInnerIter nt0 Nnearest ...
 nsp = gpuArray.zeros(Nfilt,1, 'int32');
 
 % extract ALL features on the last pass
-Params(13) = 2; % this is a flag to output features (PC and template features)
+Params(13) = 2; % 0=> neither, 1 => PC features only; 2 => template and PC features
 
 % different threshold on last pass?
 Params(3) = ops.Th(end); % usually the threshold is much lower on the last pass
@@ -97,6 +103,9 @@ p1 = .95; % decay of nsp estimate in each batch
 % also, covariance matrix between templates
 [~, iW] = max(abs(dWU(nt0min, :, :)), [], 2);
 iW = int32(squeeze(iW));
+% WtW doesn't get used, but iList, the list of channels to use when calculating
+% template features, is used in extratFEAT in mpnu8 => get this list for 
+% Nnearest, the number of channels used to calculate template features.
 [WtW, iList] = getMeWtW(single(W), single(U), Nnearest);
 
 fprintf('Time %3.0fs. Final spike extraction ...\n', toc)
@@ -110,8 +119,13 @@ ntot = 0;
 
 % these ones store features per spike
 fW  = zeros(Nnearest, 1e7, 'single'); % Nnearest is the number of nearest templates to store features for
-fWpc = zeros(NchanNear, 2*Nrank, 1e7, 'single'); % NchanNear is the number of nearest channels to take PC features from
+fWpc = zeros(NchanNear, 2*Nrank, 1e7, 'single'); % NchanNear is the number of nearest channels to take PC features from, also the size of the template
 
+% UtU is the gram matrix of the spatial components of the low-rank SVDs
+% it tells us which pairs of templates are likely to "interfere" with each other
+% such as when we subtract off a template
+% this happens before the start of the loop because the templates are
+% already defined.
 
 dWU1 = dWU;
 
@@ -140,6 +154,7 @@ for ibatch = 1:niter
     % such as when we subtract off a template
 %     [UtU, maskU] = getMeUtU(iW, iC, mask, Nnearest, Nchan); % this needs to change (but I don't know why!)%     
     
+
     % \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
     % \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
     
@@ -152,7 +167,7 @@ for ibatch = 1:niter
     [st0, id0, x0, featW, dWU0, drez, nsp0, featPC, vexp, errmsg] = ...
         mexMPnu8(Params, dataRAW, single(U), single(W), single(mu), iC-1, iW-1, UtU, iList-1, ...
         wPCA);
-    
+       
     % \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
     % \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
     
@@ -230,14 +245,28 @@ toc
 
 % discards the unused portion of the arrays
 st3 = st3(1:ntot, :);
-fW = fW(:, 1:ntot);
+fW = fW(:, 1:ntot);                 % currently not used after this point; will probably be added to phy output later
 fWpc = fWpc(:,:, 1:ntot);
+
+% sort these arrays for deterministic calculations in final_clustering
+[~,sortOrder] = sort(st3(:,1));
+st3 = st3(sortOrder,:);
+fW = fW(:,sortOrder);
+fWpc = fWpc(:,:,sortOrder);
 
 rez.dWU = dWU1 ./ single(reshape(nsp, [1,1,Nfilt]));
 rez.nsp = nsp;
 
 rez.iC = iC;
 
-fWpc = permute(fWpc, [3, 2, 1]);
+fWpc = permute(fWpc, [3, 2, 1]);    % returned as tF, used in final_clustering
+
+
+
+
+% for debugging, update st3 and tF in rez.
+% comment out to keep rez smaller
+rez.st3 = st3;
+rez.tF = fWpc;
 
 %%

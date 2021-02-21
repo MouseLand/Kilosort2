@@ -1,4 +1,6 @@
 function rez  = template_learning(rez, tF, st3)
+% doesn't use any of the nearest neighbor params, but inherits list of closest channels iC
+% calculated in extract_spikes after datashift correction, using ops.extractNchanNear
 
 wPCA  = rez.wPCA;
 iC = rez.iC;
@@ -14,7 +16,7 @@ for j = 1:length(tlag)
     wroll(:,:,j) = circshift(wPCA, tlag(j), 1)' * wPCA;
 end
 
-%% split templates into batches
+%% split templates into batches according to y position on the probe
 rmin = 0.6;
 nlow = 100;
 n0 = 0;

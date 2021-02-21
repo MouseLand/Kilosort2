@@ -20,9 +20,10 @@ sig = 10;
 wTEMP = gpuArray(rez.wTEMP);
 wPCA = gpuArray(rez.wPCA);
 
-% Get nearest channels for every template center. 
-% Template products will only be computed on these channels. 
-NchanNear = 10;
+% Get nearest channels for every putative template center, that is, 
+% every point on upsampled grid
+% Template products will only be computed on these channels.
+NchanNear = getOr(ops,'detectorNchanNear', 10);
 [iC, dist] = getClosestChannels2(ycup, xcup, rez.yc, rez.xc, NchanNear);
 
 % Templates with centers that are far from an active site are discarded
@@ -34,10 +35,14 @@ ycup = ycup(igood);
 xcup = xcup(igood);
 
 % number of nearby templates to compare for local template maximum
+% note that iC2 is now indicies of nearest upsampled point, dist2 = distance
+% to nearest upsampled point
 NchanNearUp =  min(numel(xcup), 10*NchanNear);
 [iC2, dist2] = getClosestChannels2(ycup, xcup, ycup, xcup, NchanNearUp);
 
+
 % pregenerate the Gaussian weights used for spatial components 
+% Note that dist and sig are in um
 nsizes = 5;
 v2 = gpuArray.zeros(nsizes, size(dist,2), 'single');
 for k = 1:nsizes
@@ -45,7 +50,7 @@ for k = 1:nsizes
 end
 
 % build up Params
-NchanUp = size(iC,2);
+NchanUp = size(iC,2); % number of "Good" templatss, well centered on sites
 
 % preallocate the results
 st3 = zeros(1000000, 6);
@@ -61,11 +66,11 @@ for k = 1:ops.Nbatch
 
     % run the CUDA function on this batch
     [dat, kkmax, st, cF] = spikedetector3(Params, dataRAW, wTEMP, iC-1, dist, v2, iC2-1, dist2);
-    
+ 
     % upsample the y position using the center of mass of template products
     % coming out of the CUDA function. 
-    ys = rez.yc(iC);
-    cF0 = max(0, cF);
+    ys = rez.yc(iC);    
+    cF0 = max(0, gather(cF));
     cF0 = cF0 ./ sum(cF0, 1);
     iChan = st(2, :) + 1;
     yct = sum(cF0 .* ys(:, iChan), 1);

@@ -6,14 +6,21 @@ function [rez, X] = splitAllClusters(rez, flag)
 % bimodality threshold, then the cluster is split along that direction
 % it only uses the PC features for each spike, stored in rez.cProjPC
 
+% applies only to this function. For large templates (256 channels) the 
+% GPU matrix operations can beocme long enough that they will exceed a
+% system timeout when the GPU card is used for both video and computation.
+% Can safely set to 1 if you are using a separate GPU card for compuation
+% and gpu.KernelExecutionTimeout = 0.
+useGPU = 0;    
+
 ops = rez.ops;
 
 wPCA = gather(ops.wPCA); % use PCA projections to reconstruct templates when we do splits
 
 ccsplit = rez.ops.AUCsplit; % this is the threshold for splits, and is one of the main parameters users can change
 
-NchanNear   = min(ops.Nchan, 32);
-Nnearest    = min(ops.Nchan, 32);
+NchanNear   = min(ops.Nchan, rez.ops.nNeighbors);
+Nnearest    = min(ops.Nchan, rez.ops.nNeighbors);
 sigmaMask   = ops.sigmaMask;
 
 ik = 0;
@@ -48,7 +55,11 @@ while ik<Nfilt
     ss = rez.st3(isp,1)/ops.fs; % convert to seconds
 
     clp0 = rez.cProjPC(isp, :, :); % get the PC projections for these spikes
-    clp0 = gpuArray(clp0(:,:));
+    if useGPU
+        clp0 = gpuArray(clp0(:,:));
+    else
+        clp0 = clp0(:,:);
+    end
     clp = clp0 - mean(clp0,1); % mean center them
 
     % now use two different ways to initialize the bimodal direction
@@ -62,7 +73,11 @@ while ik<Nfilt
     end
 
     % initial projections of waveform PCs onto 1D vector
-    x = gather(clp * w);
+    if useGPU
+        x = gather(clp * w);
+    else
+        x = clp * w;
+    end
     s1 = var(x(x>mean(x))); % initialize estimates of variance for the first
     s2 = var(x(x<mean(x))); % and second gaussian in the mixture of 1D gaussians
 
@@ -100,10 +115,13 @@ while ik<Nfilt
             % we re-estimate w
             StS  = clp' * (clp .* (rs(:,1)/s1 + rs(:,2)/s2))/nSpikes; % these equations follow from the model
             StMu = clp' * (rs(:,1)*mu1/s1 + rs(:,2)*mu2/s2)/nSpikes;
-
-            w = StMu'/StS; % this is the new estimate of the best pursuit direection
+            w = StMu'/StS; % this is the new estimate of the best pursuit direection  
             w = normc(w'); % which we unit normalize
-            x = gather(clp * w);  % the new projections of the data onto this direction
+            if useGPU
+                x = gather(clp * w);  % the new projections of the data onto this direction
+            else
+                x = clp * w;
+            end
         end
     end
 
